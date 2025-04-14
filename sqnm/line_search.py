@@ -1,9 +1,7 @@
 import numpy as np
 
 
-def line_search_strong_wolfe(
-    f, grad_f, x_k, p_k, alpha0=1, c1=1e-4, c2=0.9, max_iters=200
-):
+def strong_wolfe(f, grad_f, x_k, p_k, alpha0=1, c1=1e-4, c2=0.9, max_iters=200):
     """
     For Newton and quasi-Newton methods, alpha0=1 should always be used as the
     initial step size.

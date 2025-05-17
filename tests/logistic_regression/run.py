@@ -10,8 +10,10 @@ from sqnm.methods.lbfgs import l_bfgs
 from .classify import test_classify
 from .logistic_fun import logistic_f, logistic_grad_f
 
+SEED = 119432361333790769404668904864877499691
 
-def load_data(file):
+
+def load_data(file: str, rng: np.random.Generator):
     with open(file, "rb") as file_handle:
         raw_data = np.loadtxt(file_handle, delimiter=",", skiprows=0)
 
@@ -20,7 +22,7 @@ def load_data(file):
 
     n = raw_labels.size
     test_size = np.ceil(n / 5).astype(int)
-    test_index = np.random.choice(n, test_size, replace=False)
+    test_index = rng.choice(n, test_size, replace=False)
     train_index = np.setdiff1d(np.arange(len(raw_labels)), test_index)
 
     A_train = raw_train[train_index, :]
@@ -36,8 +38,12 @@ def main():
     logger = logging.getLogger()
     logging.basicConfig(level=logging.INFO)
 
+    rng = np.random.default_rng(SEED)
+
     data_dir = Path(__file__).parent / "data"
-    A_train, b_train, A_test, b_test = load_data(data_dir / "spambase/spambase.data")
+    A_train, b_train, A_test, b_test = load_data(
+        data_dir / "spambase/spambase.data", rng
+    )
     logger.info(f"A_train = {A_train.shape}")
     logger.info(f"b_train = {b_train.shape}")
     logger.info(f"A_test  = {A_test.shape}")
@@ -63,7 +69,6 @@ def main():
     l_bfgs(f, grad_f, x0, callback=callback)
     logger.info(f"Took {time.time() - start:.3f} seconds")
 
-    plt.subplot(312)
     plt.title("Gradient norm vs. iterations")
     plt.loglog(range(len(iterates)), [it[0] for it in iterates], label="L-BFGS")
     plt.legend()

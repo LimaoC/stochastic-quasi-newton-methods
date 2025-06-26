@@ -1,5 +1,4 @@
 import logging
-import sys
 import time
 from pathlib import Path
 
@@ -11,8 +10,9 @@ from torch.optim.sgd import SGD
 from torch.utils.data import DataLoader, TensorDataset
 
 from sqnm.optim.lbfgs import LBFGS
+from sqnm.optim.olbfgs import OLBFGS
 
-BATCH_SIZE = 50
+BATCH_SIZE = 200
 MAX_EPOCHS = 1_000
 
 logger = logging.getLogger()
@@ -39,17 +39,17 @@ def load_data(file: str, rng: np.random.Generator):
     return A_train, A_test, b_train, b_test
 
 
-def log_training_info(A_test, b_test, x, epoch, loss):
+def log_test_set_info(A_test, b_test, x, epoch, loss):
     with torch.no_grad():
         logits = A_test @ x
         probs = torch.sigmoid(logits)
         preds = probs > 0.5
         acc = (preds == b_test).float().mean().item()
-
     grad_norm = x.grad.norm()
+
     logger.info(
         f"Epoch {epoch+1:4}, loss = {loss:.4f}, acc = {acc:.4f}, "
-        f"grad norm = {grad_norm:10.4f}"
+        f"grad norm = {grad_norm:.4f}"
     )
 
 
@@ -76,10 +76,11 @@ def run_sgd(A_train, A_test, b_train, b_test) -> list[float]:
             epoch_loss += loss.item()
             num_batches += 1
 
-        losses.append(epoch_loss / num_batches)
+        epoch_loss /= num_batches
+        losses.append(epoch_loss)
 
         if epoch % 100 == 99:
-            log_training_info(A_test, b_test, x, epoch, loss)
+            log_test_set_info(A_test, b_test, x, epoch, epoch_loss)
 
     return losses
 
@@ -100,12 +101,54 @@ def run_lbfgs(A_train, A_test, b_train, b_test) -> list[float]:
     losses = []
     for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()
-        loss = closure()
-        optimizer.step(closure)
+        loss = optimizer.step(closure)
         losses.append(loss)
 
         if epoch % 100 == 99:
-            log_training_info(A_test, b_test, x, epoch, loss)
+            log_test_set_info(A_test, b_test, x, epoch, loss)
+
+    return losses
+
+
+def run_olbfgs(A_train, A_test, b_train, b_test) -> list[float]:
+    n, d = A_train.shape
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+    x = torch.nn.Parameter(torch.zeros(d, dtype=torch.float32))
+    optimizer = OLBFGS(
+        [x],
+        history_size=4,
+        eps=1e-10,
+        eta0=0.1 * BATCH_SIZE / (BATCH_SIZE + 2),
+        tau=10,
+        c=1,
+    )
+
+    train_dataset = TensorDataset(A_train, b_train)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    losses = []
+    for epoch in range(MAX_EPOCHS):
+        epoch_loss = 0.0
+        num_batches = 0
+        for A_batch, b_batch in train_dataloader:
+
+            def closure() -> Tensor:
+                optimizer.zero_grad()
+                logits = A_batch @ x
+                loss = loss_fn(logits, b_batch)
+                loss.backward()
+                return loss.item()
+
+            optimizer.zero_grad()
+            loss = optimizer.step(closure)
+
+            epoch_loss += loss
+            num_batches += 1
+
+        losses.append(epoch_loss / num_batches)
+
+        if epoch % 100 == 99:
+            log_test_set_info(A_test, b_test, x, epoch, loss)
 
     return losses
 
@@ -125,15 +168,22 @@ def main():
     start = time.time()
     sgd_losses = run_sgd(A_train, A_test, b_train, b_test)
     logger.info(f"SGD took {time.time() - start:.3f} seconds")
+
+    start = time.time()
+    olbfgs_losses = run_olbfgs(A_train, A_test, b_train, b_test)
+    logger.info(f"oL-BFGS took {time.time() - start:.3f} seconds")
+
     start = time.time()
     lbfgs_losses = run_lbfgs(A_train, A_test, b_train, b_test)
-    logger.info(f"LBFGS took {time.time() - start:.3f} seconds")
+    logger.info(f"L-BFGS took {time.time() - start:.3f} seconds")
 
     plt.title("Losses vs. epochs")
     plt.plot(range(len(sgd_losses)), sgd_losses, label="SGD")
+    plt.plot(range(len(olbfgs_losses)), olbfgs_losses, label="oL-BFGS")
     plt.plot(range(len(lbfgs_losses)), lbfgs_losses, label="L-BFGS")
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
+    plt.legend()
     plt.show()
 
 

@@ -1,7 +1,7 @@
 .PHONY: test_lr, check
 
-test_lr:
-	python -m tests.logistic_regression.run
+run_spambase:
+	python -m tests.classification.run_spambase
 
 check:
 	black sqnm && mypy sqnm

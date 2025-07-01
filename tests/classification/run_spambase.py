@@ -5,14 +5,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from torch import Tensor
 from torch.optim.sgd import SGD
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, RandomSampler, TensorDataset
 
 from sqnm.optim.lbfgs import LBFGS
 from sqnm.optim.olbfgs import OLBFGS
+from sqnm.optim.sqn_hv import SQNHv
 
-BATCH_SIZE = 200
 MAX_EPOCHS = 1_000
 
 logger = logging.getLogger()
@@ -53,14 +54,14 @@ def log_test_set_info(A_test, b_test, x, epoch, loss):
     )
 
 
-def run_sgd(A_train, A_test, b_train, b_test) -> list[float]:
+def run_sgd(A_train, A_test, b_train, b_test, batch_size, lr) -> list[float]:
     n, d = A_train.shape
-    loss_fn = torch.nn.BCEWithLogitsLoss()
-    x = torch.nn.Parameter(torch.zeros(d, dtype=torch.float32))
-    optimizer = SGD([x], lr=1e-4)
+    loss_fn = nn.BCEWithLogitsLoss()
+    x = nn.Parameter(torch.zeros(d, dtype=torch.float32))
+    optimizer = SGD([x], lr=lr)
 
     train_dataset = TensorDataset(A_train, b_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     losses = []
     for epoch in range(MAX_EPOCHS):
@@ -87,11 +88,11 @@ def run_sgd(A_train, A_test, b_train, b_test) -> list[float]:
 
 def run_lbfgs(A_train, A_test, b_train, b_test) -> list[float]:
     n, d = A_train.shape
-    loss_fn = torch.nn.BCEWithLogitsLoss()
-    x = torch.nn.Parameter(torch.zeros(d, dtype=torch.float32))
+    loss_fn = nn.BCEWithLogitsLoss()
+    x = nn.Parameter(torch.zeros(d, dtype=torch.float32))
     optimizer = LBFGS([x], line_search_fn="strong_wolfe")
 
-    def closure() -> Tensor:
+    def closure() -> float:
         optimizer.zero_grad()
         logits = A_train @ x
         loss = loss_fn(logits, b_train)
@@ -110,23 +111,62 @@ def run_lbfgs(A_train, A_test, b_train, b_test) -> list[float]:
     return losses
 
 
-def run_olbfgs(A_train, A_test, b_train, b_test) -> list[float]:
+def run_olbfgs(A_train, A_test, b_train, b_test, batch_size) -> list[float]:
     n, d = A_train.shape
-    loss_fn = torch.nn.BCEWithLogitsLoss()
-    x = torch.nn.Parameter(torch.zeros(d, dtype=torch.float32))
+    loss_fn = nn.BCEWithLogitsLoss()
+    x = nn.Parameter(torch.zeros(d, dtype=torch.float32))
     optimizer = OLBFGS(
         [x],
         history_size=4,
         eps=1e-10,
-        eta0=0.1 * BATCH_SIZE / (BATCH_SIZE + 2),
+        eta0=0.1 * batch_size / (batch_size + 2),
         tau=10,
         c=1,
     )
 
     train_dataset = TensorDataset(A_train, b_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     losses = []
+    for epoch in range(MAX_EPOCHS):
+        epoch_loss = 0.0
+        num_batches = 0
+        for A_batch, b_batch in train_dataloader:
+
+            def closure() -> float:
+                optimizer.zero_grad()
+                logits = A_batch @ x
+                loss = loss_fn(logits, b_batch)
+                loss.backward()
+                return loss.item()
+
+            optimizer.zero_grad()
+            loss = optimizer.step(closure)
+
+            epoch_loss += loss
+            num_batches += 1
+
+        losses.append(epoch_loss / num_batches)
+
+        if epoch % 100 == 99:
+            log_test_set_info(A_test, b_test, x, epoch, loss)
+
+    return losses
+
+
+def run_sqn_hv(
+    A_train, A_test, b_train, b_test, batch_size, curvature_batch_size, skip
+) -> list[float]:
+    n, d = A_train.shape
+    loss_fn = nn.BCEWithLogitsLoss()
+    x = nn.Parameter(torch.zeros(d, dtype=torch.float32))
+    optimizer = SQNHv([x], history_size=5, skip=skip)
+
+    train_dataset = TensorDataset(A_train, b_train)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    losses = []
+    k = 1
     for epoch in range(MAX_EPOCHS):
         epoch_loss = 0.0
         num_batches = 0
@@ -139,11 +179,27 @@ def run_olbfgs(A_train, A_test, b_train, b_test) -> list[float]:
                 loss.backward()
                 return loss.item()
 
-            optimizer.zero_grad()
-            loss = optimizer.step(closure)
+            if k % skip == 0:
+                idx = torch.randint(0, n, (curvature_batch_size,))
+                A_batch_curvature, b_batch_curvature = A_train[idx], b_train[idx]
+
+                def curvature_f(x: Tensor) -> Tensor:
+                    logits = A_batch_curvature @ x
+                    loss = loss_fn(logits, b_batch_curvature)
+                    return loss
+
+                optimizer.zero_grad()
+                loss = optimizer.step(closure, curvature_f)
+            else:
+                optimizer.zero_grad()
+                loss = optimizer.step(closure)
+
+            # if k > 2 * skip:
+            #     print("sqnhv", loss)
 
             epoch_loss += loss
             num_batches += 1
+            k += 1
 
         losses.append(epoch_loss / num_batches)
 
@@ -165,22 +221,25 @@ def main():
     logger.info(f"A_test  = {A_test.shape}")
     logger.info(f"b_test  = {b_test.shape}")
 
-    start = time.time()
-    sgd_losses = run_sgd(A_train, A_test, b_train, b_test)
-    logger.info(f"SGD took {time.time() - start:.3f} seconds")
+    methods = [
+        ("SGD", run_sgd, dict(batch_size=50, lr=1e-4)),
+        ("L-BFGS", run_lbfgs, dict()),
+        ("oL-BFGS", run_olbfgs, dict(batch_size=200)),
+        ("SQN-Hv", run_sqn_hv, dict(batch_size=100, curvature_batch_size=600, skip=10)),
+    ]
+    method_losses = []
 
-    start = time.time()
-    olbfgs_losses = run_olbfgs(A_train, A_test, b_train, b_test)
-    logger.info(f"oL-BFGS took {time.time() - start:.3f} seconds")
+    for method in methods:
+        start = time.time()
+        name, func, params = method
+        losses = func(A_train, A_test, b_train, b_test, **params)
+        logger.info(f"{name} took {time.time() - start:.3f} seconds")
+        method_losses.append(losses)
 
-    start = time.time()
-    lbfgs_losses = run_lbfgs(A_train, A_test, b_train, b_test)
-    logger.info(f"L-BFGS took {time.time() - start:.3f} seconds")
-
+    for i, method in enumerate(methods):
+        plt.plot(range(len(method_losses[i])), method_losses[i], label=method[0])
+    plt.ylim((0, 1.1))
     plt.title("Losses vs. epochs")
-    plt.plot(range(len(sgd_losses)), sgd_losses, label="SGD")
-    plt.plot(range(len(olbfgs_losses)), olbfgs_losses, label="oL-BFGS")
-    plt.plot(range(len(lbfgs_losses)), lbfgs_losses, label="L-BFGS")
     plt.xlabel("Epochs")
     plt.ylabel("Loss")
     plt.legend()

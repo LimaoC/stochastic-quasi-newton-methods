@@ -4,9 +4,9 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.func as ft
 import torch.nn as nn
 from torch import Tensor
-from torch.func import functional_call
 
 from sqnm.optim.lbfgs import LBFGS
 from sqnm.utils.param import unflatten
@@ -35,7 +35,7 @@ def run(X_train, X_test, y_train, y_test) -> list[float]:
 
     def fn(inputs: Tensor) -> Tensor:
         """Pure function to compute loss"""
-        pred = functional_call(model, unflatten(inputs, param_shapes), (X_train,))
+        pred = ft.functional_call(model, unflatten(inputs, param_shapes), (X_train,))
         return loss_fn(pred, y_train)
 
     losses = []

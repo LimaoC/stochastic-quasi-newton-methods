@@ -3,9 +3,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.func as ft
 import torch.nn as nn
 from torch import Tensor
-from torch.func import functional_call, grad, vmap
 
 from sqnm.utils.param import flatten, unflatten
 
@@ -45,56 +45,18 @@ def log_test_set_info(X_test, y_test, model, loss_fn, epoch, loss):
     params = {name: param.detach() for name, param in model.named_parameters()}
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
-    prob = torch.sigmoid(functional_call(model, params, (X_test,)))
+    prob = torch.sigmoid(ft.functional_call(model, params, (X_test,)))
     pred = prob > 0.5
     acc = (pred == y_test).float().mean().item()
 
     def compute_loss(inputs: Tensor) -> Tensor:
-        pred = functional_call(model, unflatten(inputs, param_shapes), (X_test,))
+        pred = ft.functional_call(model, unflatten(inputs, param_shapes), (X_test,))
         return loss_fn(pred, y_test)
 
-    grad_fn = torch.func.grad(compute_loss)
+    grad_fn = ft.grad(compute_loss)
     grad_norm = grad_fn(flatten(params)).norm()
 
     logger.info(
         f"Epoch {epoch:4}, loss = {loss:.4f}, acc = {acc:.4f}, "
         f"grad norm = {grad_norm:.4f}"
     )
-
-
-def create_ft_closure(
-    optimizer, model, loss_fn, per_sample_loss_fn, params, buffers, X_batch, y_batch
-):
-
-    def compute_loss(params, buffers, sample, target):
-        batch = sample.unsqueeze(0)
-        target = target.unsqueeze(0)
-
-        pred = functional_call(model, (params, buffers), (batch,))
-        loss = loss_fn(pred, target)
-        return loss
-
-    def closure(estimate_var: bool = False) -> float:
-        optimizer.zero_grad()
-        if not estimate_var:
-            loss = loss_fn(model(X_batch), y_batch)
-            loss.backward()
-            return loss.item()
-
-        per_sample_loss = per_sample_loss_fn(model(X_batch), y_batch)
-        loss = per_sample_loss.mean()
-        loss.backward()
-
-        per_sample_grad_fn = vmap(grad(compute_loss), in_dims=(None, None, 0, 0))
-        per_sample_grad = per_sample_grad_fn(params, buffers, X_batch, y_batch)
-        flat_per_sample_grad = [
-            g.reshape(g.shape[0], -1) for g in per_sample_grad.values()
-        ]
-        grad_mat = torch.cat(flat_per_sample_grad, dim=1)
-
-        loss_var = per_sample_loss.var(unbiased=True)
-        grad_var = grad_mat.var(dim=0, unbiased=True)
-
-        return loss.item(), grad_mat.mean(dim=0), loss_var, grad_var
-
-    return closure

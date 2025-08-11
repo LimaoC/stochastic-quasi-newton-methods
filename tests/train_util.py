@@ -13,6 +13,14 @@ logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
 
+def get_device():
+    return (
+        torch.accelerator.current_accelerator().type
+        if torch.accelerator.is_available()
+        else "cpu"
+    )
+
+
 @contextmanager
 def timing_context(name: str):
     start = time.time()
@@ -23,20 +31,8 @@ def timing_context(name: str):
         logger.info(f"{name} took {time.time() - start:.3f} seconds")
 
 
-def log_training_info(epoch, loss, acc, grad_norm) -> None:
-    logger.info(
-        f"\tEpoch {epoch:4}, loss = {loss:.4f}, acc = {acc:.4f}, "
-        f"grad norm = {grad_norm:.4f}"
-    )
-
-
-def compute_acc(X, y, model) -> float:
-    params = {name: param.detach() for name, param in model.named_parameters()}
-    output = ft.functional_call(model, params, (X,))
-    prob = torch.sigmoid(output)
-    pred = prob > 0.5
-    acc = (pred == y).float().mean().item()
-    return acc
+def log_training_info(epoch, loss, grad_norm) -> None:
+    logger.info(f"\tEpoch {epoch:4}, loss = {loss:.4f}, grad norm = {grad_norm:.4f}")
 
 
 def create_closure(X, y, optimizer, model, loss_fn) -> Callable[[], float]:

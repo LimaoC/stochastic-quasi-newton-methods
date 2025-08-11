@@ -4,6 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.func as ft
 import torch.nn as nn
 from torch.optim.sgd import SGD
 
@@ -15,10 +16,9 @@ from .train_lbfgs import train as train_lbfgs
 from .train_olbfgs import train as train_olbfgs
 from .train_sgd import train as train_sgd
 from .train_sqn_hv import train as train_sqn_hv
-from .train_util import timing_context
+from .train_util import get_device, timing_context
 
 # from .train_olbfgs import train_with_prob_ls as train_olbfgs_with_prob_ls
-
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
@@ -52,10 +52,20 @@ def load_spambase_data(rng: np.random.Generator):
     return X_train, X_test, y_train, y_test
 
 
+def compute_acc(X, y, model) -> float:
+    params = {name: param.detach() for name, param in model.named_parameters()}
+    output = ft.functional_call(model, params, (X,))
+    prob = torch.sigmoid(output)
+    pred = prob > 0.5
+    acc = (pred == y).float().mean().item()
+    return acc
+
+
 def main():
     num_epochs = 1000
-    batch_size = 100
+    batch_size = 500
 
+    device = get_device()
     rng = np.random.default_rng(17)
     torch.manual_seed(17)
 
@@ -72,7 +82,7 @@ def main():
     ####################################################################################
 
     with timing_context("SGD"):
-        model = linear_model(d)
+        model = linear_model(d).to(device)
         optimizer = SGD(model.parameters(), lr=1e-4, momentum=0.9, nesterov=True)
         sgd_results = train_sgd(
             X_train,
@@ -80,19 +90,26 @@ def main():
             optimizer,
             model,
             loss_fn,
+            device,
             num_epochs=num_epochs,
             batch_size=batch_size,
         )
 
     with timing_context("L-BFGS"):
-        model = linear_model(d)
+        model = linear_model(d).to(device)
         optimizer = LBFGS(model.parameters(), line_search_fn="strong_wolfe")
         lbfgs_results = train_lbfgs(
-            X_train, y_train, optimizer, model, loss_fn, num_epochs=num_epochs
+            X_train,
+            y_train,
+            optimizer,
+            model,
+            loss_fn,
+            device,
+            num_epochs=num_epochs,
         )
 
     with timing_context("oL-BFGS"):
-        model = linear_model(d)
+        model = linear_model(d).to(device)
         optimizer = OLBFGS(
             model.parameters(),
             reg_term=1.0,
@@ -104,6 +121,7 @@ def main():
             optimizer,
             model,
             loss_fn,
+            device,
             num_epochs=num_epochs,
             batch_size=batch_size,
         )
@@ -120,12 +138,13 @@ def main():
         #     model,
         #     loss_fn,
         #     ps_loss_fn,
+        #     device,
         #     num_epochs=num_epochs,
         #     batch_size=batch_size,
         # )
 
     with timing_context("SQN-Hv"):
-        model = linear_model(d)
+        model = linear_model(d).to(device)
         optimizer = SQNHv(model.parameters(), beta=1e-1)
         sqn_hv_results = train_sqn_hv(
             X_train,
@@ -133,6 +152,7 @@ def main():
             optimizer,
             model,
             loss_fn,
+            device,
             rng,
             num_epochs=num_epochs,
             batch_size=batch_size,

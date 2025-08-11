@@ -1,24 +1,22 @@
+from sqnm.optim.lbfgs import LBFGS
 from sqnm.utils.param import grad_vec
 
-from .train_util import (
-    compute_acc,
-    create_closure,
-    create_loss_fn_pure,
-    log_training_info,
-)
+from .train_util import create_closure, create_loss_fn_pure, log_training_info
 
 
 def train(
     X,
     y,
-    optimizer,
+    optimizer: LBFGS,
     model,
     loss_fn,
+    device,
     num_epochs=1000,
     log_frequency=100,
 ) -> tuple[list[float], list[float]]:
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
+    X, y = X.to(device), y.to(device)
     closure = create_closure(X, y, optimizer, model, loss_fn)
     fn = create_loss_fn_pure(X, y, model, loss_fn, param_shapes)
 
@@ -31,7 +29,6 @@ def train(
         grad_norms.append(grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            acc = compute_acc(X, y, model)
-            log_training_info(epoch + 1, loss, acc, grad_norm)
+            log_training_info(epoch + 1, loss, grad_norm)
 
     return losses, grad_norms

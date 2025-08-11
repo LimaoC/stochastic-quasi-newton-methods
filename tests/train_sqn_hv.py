@@ -1,9 +1,9 @@
 from torch.utils.data import DataLoader, TensorDataset
 
+from sqnm.optim.sqn_hv import SQNHv
 from sqnm.utils.param import grad_vec
 
 from .train_util import (
-    compute_acc,
     create_closure,
     create_loss_fn_pure,
     create_loss_fn_with_vars_pure,
@@ -14,9 +14,10 @@ from .train_util import (
 def train(
     X,
     y,
-    optimizer,
+    optimizer: SQNHv,
     model,
     loss_fn,
+    device,
     rng,
     num_epochs=1000,
     log_frequency=100,
@@ -39,12 +40,12 @@ def train(
         epoch_grad_norm = 0.0
 
         for X_batch, y_batch in train_dataloader:
-
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             closure = create_closure(X_batch, y_batch, optimizer, model, loss_fn)
 
             if k % skip == 0:
                 idx = rng.choice(n, curvature_batch_size, replace=False)
-                X_curv, y_curv = X[idx], y[idx]
+                X_curv, y_curv = X[idx].to(device), y[idx].to(device)
 
                 curvature_fn = create_loss_fn_pure(
                     X_curv, y_curv, model, loss_fn, param_shapes
@@ -64,8 +65,7 @@ def train(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            acc = compute_acc(X, y, model)
-            log_training_info(epoch + 1, epoch_loss, acc, epoch_grad_norm)
+            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
 
     return losses, grad_norms
 
@@ -73,10 +73,11 @@ def train(
 def train_with_prob_ls(
     X,
     y,
-    optimizer,
+    optimizer: SQNHv,
     model,
     loss_fn,
     ps_loss_fn,
+    device,
     rng,
     num_epochs=1000,
     log_frequency=100,
@@ -100,6 +101,7 @@ def train_with_prob_ls(
         epoch_grad_norm = 0.0
 
         for X_batch, y_batch in train_dataloader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
 
             closure = create_closure(X_batch, y_batch, optimizer, model, loss_fn)
             fn = create_loss_fn_with_vars_pure(
@@ -108,7 +110,7 @@ def train_with_prob_ls(
 
             if k % skip == 0:
                 idx = rng.choice(n, curvature_batch_size, replace=False)
-                X_curv, y_curv = X[idx], y[idx]
+                X_curv, y_curv = X[idx].to(device), y[idx].to(device)
 
                 curvature_fn = create_loss_fn_pure(
                     X_curv, y_curv, model, loss_fn, param_shapes
@@ -128,7 +130,6 @@ def train_with_prob_ls(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            acc = compute_acc(X, y, model)
-            log_training_info(epoch + 1, epoch_loss, acc, epoch_grad_norm)
+            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
 
     return losses, grad_norms

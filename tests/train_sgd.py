@@ -2,7 +2,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from sqnm.utils.param import grad_vec
 
-from .train_util import compute_acc, create_closure, log_training_info
+from .train_util import create_closure, log_training_info
 
 
 def train(
@@ -11,6 +11,7 @@ def train(
     optimizer,
     model,
     loss_fn,
+    device,
     num_epochs=1000,
     log_frequency=100,
     batch_size=100,
@@ -26,6 +27,7 @@ def train(
         epoch_grad_norm = 0.0
 
         for X_batch, y_batch in train_dataloader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             closure = create_closure(X_batch, y_batch, optimizer, model, loss_fn)
             epoch_loss += optimizer.step(closure)
             epoch_grad_norm += grad_vec(model.parameters()).norm()
@@ -37,7 +39,6 @@ def train(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            acc = compute_acc(X, y, model)
-            log_training_info(epoch + 1, epoch_loss, acc, epoch_grad_norm)
+            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
 
     return losses, grad_norms

@@ -1,9 +1,7 @@
-.PHONY: test_lr, check
+.PHONY: check
 
 run_spambase:
-	python -m tests.classification.spambase_lbfgs
-	python -m tests.classification.spambase_olbfgs
-	python -m tests.classification.spambase_sqn_hv
+	python -m tests.run_spambase
 
 check:
 	black sqnm && mypy sqnm

@@ -1,4 +1,5 @@
-from torch.utils.data import DataLoader, TensorDataset
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import DataLoader
 
 from sqnm.optim.sqn_hv import SQNHv
 from sqnm.utils.param import grad_vec
@@ -12,9 +13,9 @@ from .train_util import (
 
 
 def train(
-    X,
-    y,
+    train_dataset,
     optimizer: SQNHv,
+    scheduler: LRScheduler | None,
     model,
     loss_fn,
     device,
@@ -23,14 +24,14 @@ def train(
     log_frequency=100,
     batch_size=100,
     curvature_batch_size=600,
-    skip=10,
 ) -> tuple[list[float], list[float]]:
-    n, _ = X.shape
+    n = len(train_dataset)
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
-    train_dataset = TensorDataset(X, y)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_batches = len(train_dataloader)
+
+    skip = optimizer.param_groups[0]["skip"]
 
     losses = []
     grad_norms = []
@@ -45,7 +46,8 @@ def train(
 
             if k % skip == 0:
                 idx = rng.choice(n, curvature_batch_size, replace=False)
-                X_curv, y_curv = X[idx].to(device), y[idx].to(device)
+                X_curv, y_curv = train_dataset[idx]
+                X_curv, y_curv = X_curv.to(device), y_curv.to(device)
 
                 curvature_fn = create_loss_fn_pure(
                     X_curv, y_curv, model, loss_fn, param_shapes
@@ -57,6 +59,9 @@ def train(
             epoch_loss += loss
             epoch_grad_norm += grad_vec(model.parameters()).norm()
             k += 1
+
+        if scheduler is not None:
+            scheduler.step()
 
         # Aggregate loss and grad norm across all batches in this epoch
         epoch_loss /= num_batches
@@ -71,8 +76,7 @@ def train(
 
 
 def train_with_prob_ls(
-    X,
-    y,
+    train_dataset,
     optimizer: SQNHv,
     model,
     loss_fn,
@@ -83,15 +87,15 @@ def train_with_prob_ls(
     log_frequency=100,
     batch_size=100,
     curvature_batch_size=600,
-    skip=10,
 ) -> tuple[list[float], list[float]]:
-    n, _ = X.shape
+    n = len(train_dataset)
     params = {name: param.detach() for name, param in model.named_parameters()}
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
-    train_dataset = TensorDataset(X, y)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_batches = len(train_dataloader)
+
+    skip = optimizer.param_groups[0]["skip"]
 
     losses = []
     grad_norms = []
@@ -110,7 +114,8 @@ def train_with_prob_ls(
 
             if k % skip == 0:
                 idx = rng.choice(n, curvature_batch_size, replace=False)
-                X_curv, y_curv = X[idx].to(device), y[idx].to(device)
+                X_curv, y_curv = train_dataset[idx]
+                X_curv, y_curv = X_curv.to(device), y_curv.to(device)
 
                 curvature_fn = create_loss_fn_pure(
                     X_curv, y_curv, model, loss_fn, param_shapes

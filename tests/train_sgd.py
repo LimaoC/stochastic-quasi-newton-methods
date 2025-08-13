@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 from sqnm.utils.param import grad_vec
 
@@ -6,8 +6,7 @@ from .train_util import create_closure, log_training_info
 
 
 def train(
-    X,
-    y,
+    train_dataset,
     optimizer,
     model,
     loss_fn,
@@ -16,7 +15,6 @@ def train(
     log_frequency=100,
     batch_size=100,
 ) -> tuple[list[float], list[float]]:
-    train_dataset = TensorDataset(X, y)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_batches = len(train_dataloader)
 

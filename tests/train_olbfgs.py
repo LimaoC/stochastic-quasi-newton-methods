@@ -1,4 +1,5 @@
-from torch.utils.data import DataLoader, TensorDataset
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import DataLoader
 
 from sqnm.optim.olbfgs import OLBFGS
 from sqnm.utils.param import grad_vec
@@ -7,9 +8,9 @@ from .train_util import create_closure, create_loss_fn_with_vars_pure, log_train
 
 
 def train(
-    X,
-    y,
+    train_dataset,
     optimizer: OLBFGS,
+    scheduler: LRScheduler | None,
     model,
     loss_fn,
     device,
@@ -17,7 +18,6 @@ def train(
     log_frequency=100,
     batch_size=100,
 ) -> tuple[list[float], list[float]]:
-    train_dataset = TensorDataset(X, y)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_batches = len(train_dataloader)
 
@@ -33,6 +33,9 @@ def train(
             epoch_loss += optimizer.step(closure)
             epoch_grad_norm += grad_vec(model.parameters()).norm()
 
+        if scheduler is not None:
+            scheduler.step()
+
         # Aggregate loss and grad norm across all batches in this epoch
         epoch_loss /= num_batches
         epoch_grad_norm /= num_batches
@@ -46,8 +49,7 @@ def train(
 
 
 def train_with_prob_ls(
-    X,
-    y,
+    train_dataset,
     optimizer: OLBFGS,
     model,
     loss_fn,
@@ -60,7 +62,6 @@ def train_with_prob_ls(
     params = {name: param.detach() for name, param in model.named_parameters()}
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
-    train_dataset = TensorDataset(X, y)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     num_batches = len(train_dataloader)
 

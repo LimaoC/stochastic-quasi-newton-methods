@@ -6,7 +6,9 @@ import numpy as np
 import torch
 import torch.func as ft
 import torch.nn as nn
+from torch.optim.lr_scheduler import ExponentialLR
 from torch.optim.sgd import SGD
+from torch.utils.data import TensorDataset
 
 from sqnm.optim.lbfgs import LBFGS
 from sqnm.optim.olbfgs import OLBFGS
@@ -17,8 +19,6 @@ from .train_olbfgs import train as train_olbfgs
 from .train_sgd import train as train_sgd
 from .train_sqn_hv import train as train_sqn_hv
 from .train_util import get_device, timing_context
-
-# from .train_olbfgs import train_with_prob_ls as train_olbfgs_with_prob_ls
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +70,7 @@ def main():
     torch.manual_seed(17)
 
     X_train, X_test, y_train, y_test = load_spambase_data(rng)
+    train_dataset = TensorDataset(X_train, y_train)
     logger.info(f"X_train = {X_train.shape}")
     logger.info(f"y_train = {y_train.shape}")
     logger.info(f"X_test  = {X_test.shape}")
@@ -77,7 +78,6 @@ def main():
 
     n, d = X_train.shape
     loss_fn = nn.BCEWithLogitsLoss()
-    # ps_loss_fn = nn.BCEWithLogitsLoss(reduction="none")
 
     ####################################################################################
 
@@ -85,8 +85,7 @@ def main():
         model = linear_model(d).to(device)
         optimizer = SGD(model.parameters(), lr=1e-4, momentum=0.9, nesterov=True)
         sgd_results = train_sgd(
-            X_train,
-            y_train,
+            train_dataset,
             optimizer,
             model,
             loss_fn,
@@ -112,13 +111,14 @@ def main():
         model = linear_model(d).to(device)
         optimizer = OLBFGS(
             model.parameters(),
+            lr=1e-1,
             reg_term=1.0,
-            alpha0=0.1 * batch_size / (batch_size + 2),
         )
+        scheduler = ExponentialLR(optimizer, 0.99)
         olbfgs_results = train_olbfgs(
-            X_train,
-            y_train,
+            train_dataset,
             optimizer,
+            scheduler,
             model,
             loss_fn,
             device,
@@ -126,36 +126,22 @@ def main():
             batch_size=batch_size,
         )
 
-        # optimizer = OLBFGS(
-        #     model.parameters(),
-        #     line_search_fn="prob_wolfe",
-        #     reg_term=1.0,
-        # )
-        # olbfgs_results = train_olbfgs_with_prob_ls(
-        #     X_train,
-        #     y_train,
-        #     optimizer,
-        #     model,
-        #     loss_fn,
-        #     ps_loss_fn,
-        #     device,
-        #     num_epochs=num_epochs,
-        #     batch_size=batch_size,
-        # )
-
     with timing_context("SQN-Hv"):
         model = linear_model(d).to(device)
-        optimizer = SQNHv(model.parameters(), beta=1e-1)
+        optimizer = SQNHv(model.parameters(), lr=1e-3)
+        scheduler = ExponentialLR(optimizer, 0.99)
         sqn_hv_results = train_sqn_hv(
-            X_train,
-            y_train,
+            train_dataset,
             optimizer,
+            scheduler,
             model,
             loss_fn,
             device,
             rng,
             num_epochs=num_epochs,
             batch_size=batch_size,
+            curvature_batch_size=batch_size * 3,
+            log_frequency=1,
         )
 
     ####################################################################################

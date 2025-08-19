@@ -1,17 +1,52 @@
 import logging
 import time
 from contextlib import contextmanager
-from typing import Callable
+from typing import Callable, Iterator
 
 import torch
 import torch.func as ft
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from sqnm.utils.param import unflatten
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
+
+
+class OverlappingBatchSampler(Sampler[int]):
+    def __init__(
+        self,
+        data_source: Dataset,
+        batch_size: int,
+        overlap_size: int,
+        shuffle: bool = True,
+        generator: torch.Generator = None,
+    ):
+        self.data_source = data_source
+        self.data_size = len(data_source)
+        self.batch_size = batch_size
+        self.overlap_size = overlap_size
+        self.shuffle = shuffle
+        self.generator = generator
+
+    def __iter__(self) -> Iterator[int]:
+        if self.shuffle:
+            indices = torch.randperm(self.data_size, generator=self.generator)
+        else:
+            indices = torch.arange(self.data_size)
+        indices = indices.tolist()
+
+        start = 0
+        while start + self.batch_size <= self.data_size:
+            yield indices[start : start + self.batch_size]
+            start += self.batch_size - self.overlap_size
+
+        if start < self.data_size:
+            yield indices[start:]
+
+    def __len__(self) -> int:
+        return self.batch_size
 
 
 def get_device():

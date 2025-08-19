@@ -12,15 +12,14 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.optim.sgd import SGD
 from torch.utils.data import TensorDataset
 
-from sqnm.optim.lbfgs import LBFGS
+from sqnm.optim.mbbfgs import MBBFGS
 from sqnm.optim.olbfgs import OLBFGS
 from sqnm.optim.sqn_hv import SQNHv
 
-from ..train_lbfgs import train as train_lbfgs
+from ..train_mbbfgs import train as train_mbbfgs
 from ..train_olbfgs import train as train_olbfgs
 from ..train_sgd import train as train_sgd
 from ..train_sqn_hv import train as train_sqn_hv
-from ..train_sqn_hv import train_with_prob_ls as train_sqn_hv_with_prob_ls
 from ..train_util import get_device, timing_context
 
 logger = logging.getLogger()
@@ -71,18 +70,20 @@ def main():
     parser.add_argument(
         "-s",
         "--step_size",
-        choices=["decaying", "prob_wolfe", "strong_wolfe"],
+        choices=["decaying", "strong_wolfe", "prob_wolfe"],
         default="decaying",
     )
+    parser.add_argument("--save-fig", action="store_true")
     args = parser.parse_args()
 
     num_epochs = args.epochs
-    log_frequency = num_epochs // 10
+    log_frequency = max(min(num_epochs // 10, 100), 1)
     batch_size = args.batch_size
     step_size_strategy = args.step_size
 
     device = "cpu"  # get_device()
     rng = np.random.default_rng(17)
+    gen = torch.Generator(device)
     torch.manual_seed(17)
 
     X_train, X_test, y_train, y_test = load_spambase_data(rng)
@@ -95,7 +96,6 @@ def main():
 
     n, d = X_train.shape
     loss_fn = nn.BCEWithLogitsLoss()
-    ps_loss_fn = nn.BCEWithLogitsLoss(reduction="none")
 
     ####################################################################################
 
@@ -106,7 +106,7 @@ def main():
             scheduler = ExponentialLR(optimizer, 0.99)
         else:
             scheduler = None
-        sgd_results = train_sgd(
+        sgd_out = train_sgd(
             train_dataset,
             test_dataset,
             optimizer,
@@ -115,31 +115,24 @@ def main():
             loss_fn,
             device,
             num_epochs=num_epochs,
-            batch_size=batch_size,
             log_frequency=log_frequency,
+            batch_size=batch_size,
         )
-
-    # with timing_context("L-BFGS"):
-    #     model = linear_model(d).to(device)
-    #     optimizer = LBFGS(model.parameters(), line_search_fn="strong_wolfe")
-    #     lbfgs_results = train_lbfgs(
-    #         X_train,
-    #         y_train,
-    #         optimizer,
-    #         model,
-    #         loss_fn,
-    #         device,
-    #         num_epochs=num_epochs,
-    #     )
 
     with timing_context("oL-BFGS"):
         model = linear_model(d).to(device)
-        optimizer = OLBFGS(model.parameters(), lr=1e-1, reg_term=1.0)
         if step_size_strategy == "decaying":
+            optimizer = OLBFGS(model.parameters(), lr=1e-1, reg_term=1.0)
             scheduler = ExponentialLR(optimizer, 0.99)
-        else:
+        elif step_size_strategy == "strong_wolfe":
+            optimizer = OLBFGS(
+                model.parameters(),
+                lr=1e-1,
+                line_search_fn=step_size_strategy,
+                reg_term=1.0,
+            )
             scheduler = None
-        olbfgs_results = train_olbfgs(
+        olbfgs_out = train_olbfgs(
             train_dataset,
             test_dataset,
             optimizer,
@@ -148,18 +141,21 @@ def main():
             loss_fn,
             device,
             num_epochs=num_epochs,
-            batch_size=batch_size,
             log_frequency=log_frequency,
+            batch_size=batch_size,
         )
 
     with timing_context("SQN-Hv"):
         model = linear_model(d).to(device)
-        optimizer = SQNHv(model.parameters(), lr=1e-3)
         if step_size_strategy == "decaying":
+            optimizer = SQNHv(model.parameters(), lr=1e-3)
             scheduler = ExponentialLR(optimizer, 0.99)
-        else:
+        elif step_size_strategy == "strong_wolfe":
+            optimizer = SQNHv(
+                model.parameters(), lr=1e-3, line_search_fn=step_size_strategy
+            )
             scheduler = None
-        sqn_hv_results = train_sqn_hv(
+        sqnhv_out = train_sqn_hv(
             train_dataset,
             test_dataset,
             optimizer,
@@ -167,11 +163,30 @@ def main():
             model,
             loss_fn,
             device,
-            rng,
             num_epochs=num_epochs,
+            log_frequency=log_frequency,
             batch_size=batch_size,
             curvature_batch_size=batch_size * 2,
+        )
+
+    with timing_context("MB-BFGS"):
+        model = linear_model(d).to(device)
+        if step_size_strategy == "decaying":
+            optimizer = MBBFGS(model.parameters(), lr=1e-3)
+            scheduler = ExponentialLR(optimizer, 0.99)
+        mbbfgs_out = train_mbbfgs(
+            train_dataset,
+            test_dataset,
+            optimizer,
+            scheduler,
+            model,
+            loss_fn,
+            device,
+            generator=gen,
+            num_epochs=num_epochs,
             log_frequency=log_frequency,
+            batch_size=batch_size,
+            overlap_batch_size=batch_size // 5,
         )
 
     ####################################################################################
@@ -180,9 +195,41 @@ def main():
     fig, ax = plt.subplots(figsize=(8, 6))
 
     skip = 5
-    ax.plot(sgd_results["losses"][skip:], label="SGD")
-    ax.plot(olbfgs_results["losses"][skip:], label="oL-BFGS")
-    ax.plot(sqn_hv_results["losses"][skip:], label="SQN-Hv")
+    epochs = np.arange(skip, num_epochs)
+    (sgd_plot,) = ax.plot(epochs, sgd_out["epoch_losses"][skip:], label="SGD")
+    (olbfgs_plot,) = ax.plot(epochs, olbfgs_out["epoch_losses"][skip:], label="oL-BFGS")
+    (sqnhv_plot,) = ax.plot(epochs, sqnhv_out["epoch_losses"][skip:], label="SQN-Hv")
+    (mbbfgs_plot,) = ax.plot(epochs, mbbfgs_out["epoch_losses"][skip:], label="MB-BFGS")
+
+    epochs = np.arange(0, num_epochs, log_frequency) + log_frequency
+    ax.plot(
+        epochs,
+        sgd_out["test_losses"],
+        color=sgd_plot.get_color(),
+        marker="x",
+        alpha=0.3,
+    )
+    ax.plot(
+        epochs,
+        olbfgs_out["test_losses"],
+        color=olbfgs_plot.get_color(),
+        marker="x",
+        alpha=0.3,
+    )
+    ax.plot(
+        epochs,
+        sqnhv_out["test_losses"],
+        color=sqnhv_plot.get_color(),
+        marker="x",
+        alpha=0.3,
+    )
+    ax.plot(
+        epochs,
+        mbbfgs_out["test_losses"],
+        color=mbbfgs_plot.get_color(),
+        marker="x",
+        alpha=0.3,
+    )
 
     ax.set_title(
         f"Losses vs. epochs ({step_size_strategy}, {num_epochs} epochs, "
@@ -190,13 +237,16 @@ def main():
     )
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_xscale("log")
+    # ax.set_xscale("log")
     ax.legend()
 
-    # plt.show()
-    plt.savefig(
-        f"./figures/logistic_regression/{step_size_strategy}-{num_epochs}epochs-{batch_size}-batch.pdf"
-    )
+    if args.save_fig:
+        plt.savefig(
+            f"./figures/logistic_regression/"
+            f"{step_size_strategy}-{num_epochs}epochs-{batch_size}-batch.pdf"
+        )
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":

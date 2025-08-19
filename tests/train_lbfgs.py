@@ -1,19 +1,28 @@
-from sqnm.optim.lbfgs import LBFGS
-from sqnm.utils.param import grad_vec
+from typing import Any
 
-from .train_util import create_closure, create_loss_fn_pure, log_training_info
+from torch.utils.data import Dataset
+
+from sqnm.optim.lbfgs import LBFGS
+
+from .train_util import (
+    compute_loss,
+    create_closure,
+    create_loss_fn_pure,
+    log_training_info,
+)
 
 
 def train(
     X,
     y,
+    test_dataset: Dataset,
     optimizer: LBFGS,
     model,
     loss_fn,
     device,
     num_epochs=1000,
     log_frequency=100,
-) -> tuple[list[float], list[float]]:
+) -> dict[str, Any]:
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
     X, y = X.to(device), y.to(device)
@@ -21,14 +30,14 @@ def train(
     fn = create_loss_fn_pure(X, y, model, loss_fn, param_shapes)
 
     losses = []
-    grad_norms = []
+    test_losses = []
     for epoch in range(num_epochs):
         loss = optimizer.step(closure, fn)
-        grad_norm = grad_vec(model.parameters()).norm()
         losses.append(loss)
-        grad_norms.append(grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            log_training_info(epoch + 1, loss, grad_norm)
+            test_loss = compute_loss(test_dataset, model, loss_fn)
+            test_losses.append(test_loss)
+            log_training_info(epoch + 1, loss, test_loss)
 
-    return losses, grad_norms
+    return {"epoch_losses": losses, "test_losses": test_losses}

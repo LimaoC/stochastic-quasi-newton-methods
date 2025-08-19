@@ -6,6 +6,7 @@ from typing import Callable
 import torch
 import torch.func as ft
 from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
 
 from sqnm.utils.param import unflatten
 
@@ -31,8 +32,20 @@ def timing_context(name: str):
         logger.info(f"{name} took {time.time() - start:.3f} seconds")
 
 
-def log_training_info(epoch, loss, grad_norm) -> None:
-    logger.info(f"\tEpoch {epoch:4}, loss = {loss:.4f}, grad norm = {grad_norm:.4f}")
+def compute_loss(dataset: Dataset, model, loss_fn, batch_size=1000):
+    dataloader = DataLoader(dataset, batch_size=batch_size)
+    num_batches = len(dataloader)
+    loss = 0.0
+    with torch.no_grad():
+        for X_batch, y_batch in dataloader:
+            loss += loss_fn(model(X_batch), y_batch)
+    return loss / num_batches
+
+
+def log_training_info(epoch, epoch_loss, test_loss) -> None:
+    logger.info(
+        f"\tEpoch {epoch:4}, epoch loss = {epoch_loss:.4f}, test loss = {test_loss:.4f}"
+    )
 
 
 def create_closure(X, y, optimizer, model, loss_fn) -> Callable[[], float]:

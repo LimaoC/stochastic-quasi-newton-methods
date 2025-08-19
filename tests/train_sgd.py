@@ -1,5 +1,6 @@
 from typing import Any
 
+import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.sgd import SGD
@@ -16,11 +17,14 @@ def train(
     model: nn.Module,
     loss_fn,
     device,
+    generator: torch.Generator | None = None,
     num_epochs=1000,
     log_frequency=100,
     batch_size=100,
 ) -> dict[str, Any]:
-    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, generator=generator
+    )
     num_batches = len(dataloader)
 
     epoch_losses = []

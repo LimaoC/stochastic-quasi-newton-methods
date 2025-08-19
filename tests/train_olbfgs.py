@@ -1,5 +1,6 @@
 from typing import Any
 
+import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Dataset
@@ -22,6 +23,7 @@ def train(
     model: nn.Module,
     loss_fn,
     device,
+    generator: torch.Generator | None = None,
     num_epochs=1000,
     log_frequency=100,
     batch_size=100,
@@ -29,7 +31,9 @@ def train(
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
     line_search_fn = optimizer.param_groups[0]["line_search_fn"]
 
-    dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, generator=generator
+    )
     num_batches = len(dataloader)
 
     epoch_losses = []

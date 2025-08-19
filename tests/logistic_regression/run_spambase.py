@@ -82,9 +82,9 @@ def main():
     step_size_strategy = args.step_size
 
     device = "cpu"  # get_device()
-    rng = np.random.default_rng(17)
+    rng = np.random.default_rng(0)
+    torch.manual_seed(0)
     gen = torch.Generator(device)
-    torch.manual_seed(17)
 
     X_train, X_test, y_train, y_test = load_spambase_data(rng)
     train_dataset = TensorDataset(X_train, y_train)
@@ -114,6 +114,7 @@ def main():
             model,
             loss_fn,
             device,
+            generator=gen,
             num_epochs=num_epochs,
             log_frequency=log_frequency,
             batch_size=batch_size,
@@ -140,6 +141,7 @@ def main():
             model,
             loss_fn,
             device,
+            generator=gen,
             num_epochs=num_epochs,
             log_frequency=log_frequency,
             batch_size=batch_size,
@@ -163,6 +165,7 @@ def main():
             model,
             loss_fn,
             device,
+            generator=gen,
             num_epochs=num_epochs,
             log_frequency=log_frequency,
             batch_size=batch_size,
@@ -194,42 +197,19 @@ def main():
     sns.set_theme(style="whitegrid")
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    skip = 5
+    skip = 10
     epochs = np.arange(skip, num_epochs)
-    (sgd_plot,) = ax.plot(epochs, sgd_out["epoch_losses"][skip:], label="SGD")
-    (olbfgs_plot,) = ax.plot(epochs, olbfgs_out["epoch_losses"][skip:], label="oL-BFGS")
-    (sqnhv_plot,) = ax.plot(epochs, sqnhv_out["epoch_losses"][skip:], label="SQN-Hv")
-    (mbbfgs_plot,) = ax.plot(epochs, mbbfgs_out["epoch_losses"][skip:], label="MB-BFGS")
+    (p1,) = ax.plot(epochs, sgd_out["epoch_losses"][skip:], label="SGD")
+    (p2,) = ax.plot(epochs, olbfgs_out["epoch_losses"][skip:], label="oL-BFGS")
+    (p3,) = ax.plot(epochs, sqnhv_out["epoch_losses"][skip:], label="SQN-Hv")
+    (p4,) = ax.plot(epochs, mbbfgs_out["epoch_losses"][skip:], label="MB-BFGS")
 
     epochs = np.arange(0, num_epochs, log_frequency) + log_frequency
-    ax.plot(
-        epochs,
-        sgd_out["test_losses"],
-        color=sgd_plot.get_color(),
-        marker="x",
-        alpha=0.3,
-    )
-    ax.plot(
-        epochs,
-        olbfgs_out["test_losses"],
-        color=olbfgs_plot.get_color(),
-        marker="x",
-        alpha=0.3,
-    )
-    ax.plot(
-        epochs,
-        sqnhv_out["test_losses"],
-        color=sqnhv_plot.get_color(),
-        marker="x",
-        alpha=0.3,
-    )
-    ax.plot(
-        epochs,
-        mbbfgs_out["test_losses"],
-        color=mbbfgs_plot.get_color(),
-        marker="x",
-        alpha=0.3,
-    )
+    colors = [p1.get_color(), p2.get_color(), p3.get_color(), p4.get_color()]
+    ax.plot(epochs, sgd_out["test_losses"], color=colors[0], marker="x", alpha=0.3)
+    ax.plot(epochs, olbfgs_out["test_losses"], color=colors[1], marker="x", alpha=0.3)
+    ax.plot(epochs, sqnhv_out["test_losses"], color=colors[2], marker="x", alpha=0.3)
+    ax.plot(epochs, mbbfgs_out["test_losses"], color=colors[3], marker="x", alpha=0.3)
 
     ax.set_title(
         f"Losses vs. epochs ({step_size_strategy}, {num_epochs} epochs, "

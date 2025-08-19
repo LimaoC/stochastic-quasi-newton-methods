@@ -1,5 +1,6 @@
 from typing import Any
 
+import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import BatchSampler, DataLoader, Dataset, RandomSampler
@@ -22,6 +23,7 @@ def train(
     model: nn.Module,
     loss_fn,
     device,
+    generator: torch.Generator | None = None,
     num_epochs=1000,
     log_frequency=100,
     batch_size=100,
@@ -35,7 +37,7 @@ def train(
     num_batches = len(dataloader)
 
     curvature_sampler = BatchSampler(
-        RandomSampler(train_dataset, replacement=True),
+        RandomSampler(train_dataset, replacement=True, generator=generator),
         curvature_batch_size,
         drop_last=False,
     )

@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import BatchSampler, DataLoader, Dataset, RandomSampler
 
-from sqnm.optim.sqn_hv import SQNHv
+from sqnm.optim.sqnhv import SQNHv
 
 from .train_util import (
     compute_loss,

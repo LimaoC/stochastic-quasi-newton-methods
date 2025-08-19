@@ -14,12 +14,12 @@ from torch.utils.data import TensorDataset
 
 from sqnm.optim.mbbfgs import MBBFGS
 from sqnm.optim.olbfgs import OLBFGS
-from sqnm.optim.sqn_hv import SQNHv
+from sqnm.optim.sqnhv import SQNHv
 
 from ..train_mbbfgs import train as train_mbbfgs
 from ..train_olbfgs import train as train_olbfgs
 from ..train_sgd import train as train_sgd
-from ..train_sqn_hv import train as train_sqn_hv
+from ..train_sqnhv import train as train_sqnhv
 from ..train_util import get_device, timing_context
 
 logger = logging.getLogger()
@@ -157,7 +157,7 @@ def main():
                 model.parameters(), lr=1e-3, line_search_fn=step_size_strategy
             )
             scheduler = None
-        sqnhv_out = train_sqn_hv(
+        sqnhv_out = train_sqnhv(
             train_dataset,
             test_dataset,
             optimizer,

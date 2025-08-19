@@ -1,4 +1,8 @@
-from torch.utils.data import DataLoader
+import torch
+import torch.nn as nn
+from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.sgd import SGD
+from torch.utils.data import DataLoader, TensorDataset
 
 from sqnm.utils.param import grad_vec
 
@@ -6,9 +10,11 @@ from .train_util import create_closure, log_training_info
 
 
 def train(
-    train_dataset,
-    optimizer,
-    model,
+    train_dataset: TensorDataset,
+    test_dataset: TensorDataset,
+    optimizer: SGD,
+    scheduler: LRScheduler | None,
+    model: nn.Module,
     loss_fn,
     device,
     num_epochs=1000,
@@ -16,6 +22,7 @@ def train(
     batch_size=100,
 ) -> tuple[list[float], list[float]]:
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    X_test, y_test = test_dataset[:]
     num_batches = len(train_dataloader)
 
     losses = []
@@ -37,6 +44,8 @@ def train(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
+            with torch.no_grad():
+                test_loss = loss_fn(model(X_test), y_test)
+            log_training_info(epoch + 1, test_loss, epoch_grad_norm)
 
-    return losses, grad_norms
+    return {"losses": losses, "grad_norms": grad_norms}

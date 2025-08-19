@@ -1,5 +1,6 @@
+import torch
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from sqnm.optim.sqn_hv import SQNHv
 from sqnm.utils.param import grad_vec
@@ -13,7 +14,8 @@ from .train_util import (
 
 
 def train(
-    train_dataset,
+    train_dataset: TensorDataset,
+    test_dataset: TensorDataset,
     optimizer: SQNHv,
     scheduler: LRScheduler | None,
     model,
@@ -29,6 +31,7 @@ def train(
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    X_test, y_test = test_dataset[:]
     num_batches = len(train_dataloader)
 
     skip = optimizer.param_groups[0]["skip"]
@@ -70,13 +73,16 @@ def train(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
+            with torch.no_grad():
+                test_loss = loss_fn(model(X_test), y_test)
+            log_training_info(epoch + 1, test_loss, epoch_grad_norm)
 
-    return losses, grad_norms
+    return {"losses": losses, "grad_norms": grad_norms}
 
 
 def train_with_prob_ls(
-    train_dataset,
+    train_dataset: TensorDataset,
+    test_dataset: TensorDataset,
     optimizer: SQNHv,
     model,
     loss_fn,
@@ -93,6 +99,7 @@ def train_with_prob_ls(
     param_shapes = {name: param.shape for name, param in model.named_parameters()}
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    X_test, y_test = test_dataset[:]
     num_batches = len(train_dataloader)
 
     skip = optimizer.param_groups[0]["skip"]
@@ -135,6 +142,8 @@ def train_with_prob_ls(
         grad_norms.append(epoch_grad_norm)
 
         if epoch % log_frequency == log_frequency - 1:
-            log_training_info(epoch + 1, epoch_loss, epoch_grad_norm)
+            with torch.no_grad():
+                test_loss = loss_fn(model(X_test), y_test)
+            log_training_info(epoch + 1, test_loss, epoch_grad_norm)
 
-    return losses, grad_norms
+    return {"losses": losses, "grad_norms": grad_norms}

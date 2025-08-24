@@ -14,13 +14,15 @@ from torch.utils.data import TensorDataset
 
 from sqnm.optim.mbbfgs import MBBFGS
 from sqnm.optim.olbfgs import OLBFGS
+from sqnm.optim.scbfgs import SCBFGS
 from sqnm.optim.sqnhv import SQNHv
 
 from ..train_mbbfgs import train as train_mbbfgs
 from ..train_olbfgs import train as train_olbfgs
+from ..train_scbfgs import train as train_scbfgs
 from ..train_sgd import train as train_sgd
 from ..train_sqnhv import train as train_sqnhv
-from ..train_util import get_device, timing_context
+from ..train_util import create_losses_plot, get_device, timing_context
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
@@ -128,7 +130,6 @@ def main():
         elif step_size_strategy == "strong_wolfe":
             optimizer = OLBFGS(
                 model.parameters(),
-                lr=1e-1,
                 line_search_fn=step_size_strategy,
                 reg_term=1.0,
             )
@@ -153,9 +154,7 @@ def main():
             optimizer = SQNHv(model.parameters(), lr=1e-3)
             scheduler = ExponentialLR(optimizer, 0.99)
         elif step_size_strategy == "strong_wolfe":
-            optimizer = SQNHv(
-                model.parameters(), lr=1e-3, line_search_fn=step_size_strategy
-            )
+            optimizer = SQNHv(model.parameters(), line_search_fn=step_size_strategy)
             scheduler = None
         sqnhv_out = train_sqnhv(
             train_dataset,
@@ -177,6 +176,9 @@ def main():
         if step_size_strategy == "decaying":
             optimizer = MBBFGS(model.parameters(), lr=1e-3)
             scheduler = ExponentialLR(optimizer, 0.99)
+        elif step_size_strategy == "strong_wolfe":
+            optimizer = MBBFGS(model.parameters(), line_search_fn=step_size_strategy)
+            scheduler = None
         mbbfgs_out = train_mbbfgs(
             train_dataset,
             test_dataset,
@@ -192,38 +194,41 @@ def main():
             overlap_batch_size=batch_size // 5,
         )
 
+    with timing_context("SC-BFGS"):
+        model = linear_model(d).to(device)
+        if step_size_strategy == "decaying":
+            optimizer = SCBFGS(model.parameters(), lr=1e-3)
+            scheduler = ExponentialLR(optimizer, 0.99)
+        elif step_size_strategy == "strong_wolfe":
+            optimizer = SCBFGS(model.parameters(), line_search_fn=step_size_strategy)
+            scheduler = None
+        scbfgs_out = train_scbfgs(
+            train_dataset,
+            test_dataset,
+            optimizer,
+            scheduler,
+            model,
+            loss_fn,
+            device,
+            generator=gen,
+            num_epochs=num_epochs,
+            log_frequency=log_frequency,
+            batch_size=batch_size,
+        )
+
     ####################################################################################
 
     sns.set_theme(style="whitegrid")
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    skip = 10
-    epochs = np.arange(skip, num_epochs)
-    (p1,) = ax.plot(epochs, sgd_out["epoch_losses"][skip:], label="SGD")
-    (p2,) = ax.plot(epochs, olbfgs_out["epoch_losses"][skip:], label="oL-BFGS")
-    (p3,) = ax.plot(epochs, sqnhv_out["epoch_losses"][skip:], label="SQN-Hv")
-    (p4,) = ax.plot(epochs, mbbfgs_out["epoch_losses"][skip:], label="MB-BFGS")
-
-    epochs = np.arange(0, num_epochs, log_frequency) + log_frequency
-    colors = [p1.get_color(), p2.get_color(), p3.get_color(), p4.get_color()]
-    ax.plot(epochs, sgd_out["test_losses"], color=colors[0], marker="x", alpha=0.3)
-    ax.plot(epochs, olbfgs_out["test_losses"], color=colors[1], marker="x", alpha=0.3)
-    ax.plot(epochs, sqnhv_out["test_losses"], color=colors[2], marker="x", alpha=0.3)
-    ax.plot(epochs, mbbfgs_out["test_losses"], color=colors[3], marker="x", alpha=0.3)
-
-    ax.set_title(
-        f"Losses vs. epochs ({step_size_strategy}, {num_epochs} epochs, "
-        f"{batch_size} batch size)"
+    fig, ax = create_losses_plot(
+        (sgd_out, olbfgs_out, sqnhv_out, mbbfgs_out, scbfgs_out),
+        ("SGD", "oL-BFGS", "SQN-Hv", "MB-BFGS", "SC-BFGS"),
+        log_frequency,
     )
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    # ax.set_xscale("log")
-    ax.legend()
 
     if args.save_fig:
         plt.savefig(
             f"./figures/logistic_regression/"
-            f"{step_size_strategy}-{num_epochs}epochs-{batch_size}-batch.pdf"
+            f"{step_size_strategy}-{num_epochs}epoch-{batch_size}batch.pdf"
         )
     else:
         plt.show()

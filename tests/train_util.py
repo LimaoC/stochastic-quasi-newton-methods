@@ -1,8 +1,10 @@
 import logging
 import time
 from contextlib import contextmanager
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.func as ft
 from torch import Tensor
@@ -81,6 +83,10 @@ def log_training_info(epoch, epoch_loss, test_loss) -> None:
     logger.info(
         f"\tEpoch {epoch:4}, epoch loss = {epoch_loss:.4f}, test loss = {test_loss:.4f}"
     )
+
+
+def num_params(model: torch.nn.Module):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def create_closure(X, y, optimizer, model, loss_fn) -> Callable[[], float]:
@@ -178,3 +184,34 @@ def create_loss_fn_with_vars_pure(
         return loss, grad_mean, loss_var, grad_var
 
     return fn
+
+
+def create_losses_plot(
+    outs: list[dict[str, Any]],
+    out_names: list[str],
+    log_frequency,
+    logy=True,
+    skip_first=10,
+):
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    num_epochs = len(outs[0]["epoch_losses"])
+    epochs = np.arange(skip_first, num_epochs)
+    plots = []
+    for out, out_name in zip(outs, out_names):
+        (p,) = ax.plot(epochs, out["epoch_losses"][skip_first:], label=out_name)
+        plots.append(p)
+
+    epochs = np.arange(0, num_epochs, log_frequency) + log_frequency
+    cs = [p.get_color() for p in plots]
+    for i, out in enumerate(outs):
+        ax.plot(epochs, out["test_losses"], color=cs[i], marker="x", alpha=0.3)
+
+    ax.set_xlabel("Epoch")
+    if logy:
+        ax.set_ylabel("Log loss")
+        ax.set_yscale("log")
+    else:
+        ax.set_ylabel("Loss")
+    ax.legend()
+    return fig, ax

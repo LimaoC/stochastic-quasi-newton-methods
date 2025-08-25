@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import ExponentialLR
@@ -31,16 +32,6 @@ from ..train_util import (
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
-OUTPUT_DIR = "./outs/binary_classification/spambase/objs/"
-DIMS = 57
-
-
-def linear_model() -> nn.Linear:
-    model = nn.Linear(DIMS, 1, bias=False)
-    with torch.no_grad():
-        model.weight.copy_(torch.zeros(DIMS, dtype=torch.float32))
-    return model
-
 
 def load_spambase_data(rng: np.random.Generator):
     file = Path(__file__).parent / "data/spambase/spambase.data"
@@ -51,7 +42,7 @@ def load_spambase_data(rng: np.random.Generator):
     raw_labels = raw_data[:, -1].astype(int)
 
     n = raw_labels.size
-    test_size = np.ceil(n / 5).astype(int)
+    test_size = int(np.ceil(n / 5))
     test_index = rng.choice(n, test_size, replace=False)
     train_index = np.setdiff1d(np.arange(n), test_index)
 
@@ -63,10 +54,39 @@ def load_spambase_data(rng: np.random.Generator):
     return X_train, X_test, y_train, y_test
 
 
+def load_mushroom_data(rng: np.random.Generator):
+    # REF: https://github.com/ghattab/secondarydata/blob/main/SecondaryData/secondary_data_no_miss.csv
+    file = Path(__file__).parent / "data/mushroom/secondary_data.csv"
+    df = pd.read_csv(file, sep=";")
+
+    # Encode labels as 0 (edible) and 1 (poisonous)
+    raw_labels = df.iloc[:, 0]
+    raw_labels = pd.factorize(raw_labels)[0]
+
+    # One-hot encode categorical features
+    raw_features = df.iloc[:, 1:]
+    raw_features = pd.get_dummies(raw_features, drop_first=False, dtype=float).values
+
+    n = raw_labels.size
+    test_size = np.ceil(n / 5).astype(int)
+    test_index = rng.choice(n, test_size, replace=False)
+    train_index = np.setdiff1d(np.arange(n), test_index)
+
+    X_train = torch.tensor(raw_features[train_index, :], dtype=torch.float32)
+    X_test = torch.tensor(raw_features[test_index, :], dtype=torch.float32)
+    y_train = torch.tensor(raw_labels[train_index], dtype=torch.float32).unsqueeze(1)
+    y_test = torch.tensor(raw_labels[test_index], dtype=torch.float32).unsqueeze(1)
+
+    return X_train, X_test, y_train, y_test
+
+
 def main():
     parser = argparse.ArgumentParser(prog="run_spambase")
     parser.add_argument("-e", "--epochs", type=int, default=100)
     parser.add_argument("-b", "--batch_size", type=int, default=100, nargs="+")
+    parser.add_argument(
+        "-d", "--dataset", choices=["spambase", "mushroom"], default="spambase"
+    )
     parser.add_argument(
         "-s",
         "--step_size",
@@ -93,9 +113,14 @@ def main():
     device = "cpu"  # get_device()
     rng = np.random.default_rng(0)
     torch.manual_seed(0)
-    gen = torch.Generator(device)
+    gen = torch.Generator()
 
-    X_train, X_test, y_train, y_test = load_spambase_data(rng)
+    if args.dataset == "spambase":
+        X_train, X_test, y_train, y_test = load_spambase_data(rng)
+        OUTPUT_DIR = "./outs/binary_classification/spambase/objs/"
+    elif args.dataset == "mushroom":
+        X_train, X_test, y_train, y_test = load_mushroom_data(rng)
+        OUTPUT_DIR = "./outs/binary_classification/mushroom/objs/"
     train_dataset = TensorDataset(X_train, y_train)
     test_dataset = TensorDataset(X_test, y_test)
     logger.info(f"X_train = {X_train.shape}")
@@ -103,10 +128,17 @@ def main():
     logger.info(f"X_test  = {X_test.shape}")
     logger.info(f"y_test  = {y_test.shape}")
 
+    d = X_train.shape[1]
     loss_fn = nn.BCEWithLogitsLoss()
     metrics = {"accuracy": BinaryAccuracy()}
 
-    initial_loss = compute_loss(test_dataset, linear_model(), loss_fn)
+    def linear_model() -> nn.Linear:
+        model = nn.Linear(d, 1, bias=False)
+        with torch.no_grad():
+            model.weight.copy_(torch.zeros(d, dtype=torch.float32))
+        return model
+
+    initial_loss = compute_loss(test_dataset, linear_model(), loss_fn, "cpu")
 
     ####################################################################################
 

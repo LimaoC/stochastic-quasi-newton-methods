@@ -51,20 +51,24 @@ def log_training_info(
 ################################################################################
 
 
-def compute_loss(dataset: Dataset, model: nn.Module, loss_fn, batch_size=1000):
+def compute_loss(dataset: Dataset, model: nn.Module, loss_fn, device, batch_size=1000):
     dataloader = DataLoader(dataset, batch_size=batch_size)
-    loss = Mean()
+    loss = Mean()  # keep metric on cpu
     with torch.no_grad():
         for X_batch, y_batch in dataloader:
-            loss.update(loss_fn(model(X_batch), y_batch))
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            loss.update(loss_fn(model(X_batch), y_batch).cpu())
     return loss.compute().item()
 
 
-def compute_metric(dataset: Dataset, model: nn.Module, metric: Metric, batch_size=1000):
+def compute_metric(
+    dataset: Dataset, model: nn.Module, metric: Metric, device, batch_size=1000
+):
     dataloader = DataLoader(dataset, batch_size=batch_size)
     with torch.no_grad():
         for X_batch, y_batch in dataloader:
-            metric.update(model(X_batch).squeeze(), y_batch.squeeze())
+            X_batch = X_batch.to(device)
+            metric.update(model(X_batch).cpu().squeeze(), y_batch.squeeze())
     return metric.compute().item()
 
 

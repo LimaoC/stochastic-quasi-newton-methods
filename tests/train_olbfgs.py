@@ -75,10 +75,10 @@ def train(
             break
 
         if epoch % log_frequency == log_frequency - 1:
-            test_loss = compute_loss(test_dataset, model, loss_fn)
+            test_loss = compute_loss(test_dataset, model, loss_fn, device)
             test_losses.append(test_loss)
             for name, metric in metrics.items():
-                metric_val = compute_metric(test_dataset, model, metric)
+                metric_val = compute_metric(test_dataset, model, metric, device)
                 test_metrics[name].append(metric_val)
             log_training_info(epoch + 1, epoch_loss, test_loss, test_metrics)
 

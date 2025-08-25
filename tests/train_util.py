@@ -1,19 +1,122 @@
+import itertools
 import logging
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.func as ft
+import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Sampler
+from torcheval.metrics import Mean
+from torcheval.metrics.metric import Metric
 
 from sqnm.utils.param import unflatten
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
+
+
+################################################################################
+# Logging
+################################################################################
+
+
+@contextmanager
+def timing_context(name: str):
+    start = time.time()
+    logger.info(f"Training with {name}...")
+    try:
+        yield
+    finally:
+        logger.info(f"\tTook {time.time() - start:.3f} seconds")
+
+
+def log_training_info(
+    epoch: int, epoch_loss: float, test_loss: float, test_metrics: dict[str, Metric]
+) -> None:
+    msg = (
+        f"\tEpoch {epoch:4}, epoch_loss = {epoch_loss:8.4f}, "
+        f"test_loss = {test_loss:8.4f}"
+    )
+    for name, metric_vals in test_metrics.items():
+        msg += f", {name} = {metric_vals[-1]:.4f}"
+    logger.info(msg)
+
+
+################################################################################
+# Metrics
+################################################################################
+
+
+def compute_loss(dataset: Dataset, model: nn.Module, loss_fn, batch_size=1000):
+    dataloader = DataLoader(dataset, batch_size=batch_size)
+    loss = Mean()
+    with torch.no_grad():
+        for X_batch, y_batch in dataloader:
+            loss.update(loss_fn(model(X_batch), y_batch))
+    return loss.compute().item()
+
+
+def compute_metric(dataset: Dataset, model: nn.Module, metric: Metric, batch_size=1000):
+    dataloader = DataLoader(dataset, batch_size=batch_size)
+    with torch.no_grad():
+        for X_batch, y_batch in dataloader:
+            metric.update(model(X_batch).squeeze(), y_batch.squeeze())
+    return metric.compute().item()
+
+
+################################################################################
+# Objects
+################################################################################
+
+
+def save_lowest_test_loss_runs(outs, optimizer_name, step_size, output_dir, n=3):
+    sorted_outs = sorted(outs, key=lambda out: out["min_test_loss"])
+    for i, out in enumerate(sorted_outs[:n]):
+        loss, params = out["min_test_loss"], out["params"]
+        save = f"{optimizer_name}-{step_size}-{i+1}.pt"
+        logger.info(f"Saving min. test loss {loss:.4f} run, params {params} ({save})")
+        torch.save(out, output_dir + save)
+
+
+################################################################################
+# Plots
+################################################################################
+
+
+def create_losses_plot(
+    ax,
+    outs: list[dict[str, Any]],
+    out_names: list[str],
+    logy=True,
+    skip_first=0,
+):
+    num_epochs = len(outs[0]["epoch_losses"])
+    epochs = np.arange(skip_first, num_epochs)
+    plots = []
+    for out, out_name in zip(outs, out_names):
+        (p,) = ax.plot(epochs, out["epoch_losses"][skip_first:], label=out_name)
+        plots.append(p)
+
+    log_frequency = outs[0]["log_frequency"]
+    epochs = np.arange(0, num_epochs - 1, log_frequency) + log_frequency
+    cs = [p.get_color() for p in plots]
+    for i, out in enumerate(outs):
+        ax.plot(epochs, out["test_losses"], color=cs[i], marker="x", alpha=0.3)
+
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    if logy:
+        ax.set_yscale("log")
+    ax.legend()
+
+
+################################################################################
+# Training
+################################################################################
 
 
 class OverlappingBatchSampler(Sampler[int]):
@@ -59,34 +162,18 @@ def get_device():
     )
 
 
-@contextmanager
-def timing_context(name: str):
-    start = time.time()
-    logger.info(f"Training with {name}...")
-    try:
-        yield
-    finally:
-        logger.info(f"{name} took {time.time() - start:.3f} seconds")
-
-
-def compute_loss(dataset: Dataset, model, loss_fn, batch_size=1000):
-    dataloader = DataLoader(dataset, batch_size=batch_size)
-    num_batches = len(dataloader)
-    loss = 0.0
-    with torch.no_grad():
-        for X_batch, y_batch in dataloader:
-            loss += loss_fn(model(X_batch), y_batch)
-    return loss / num_batches
-
-
-def log_training_info(epoch, epoch_loss, test_loss) -> None:
-    logger.info(
-        f"\tEpoch {epoch:4}, epoch loss = {epoch_loss:.4f}, test loss = {test_loss:.4f}"
-    )
-
-
 def num_params(model: torch.nn.Module):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def parameter_grid(param_dict):
+    """
+    scikit-learn-like parameter grid
+    """
+    items = sorted(param_dict.items())  # consistent ordering
+    keys, values = zip(*items)
+    for combination in itertools.product(*values):
+        yield dict(zip(keys, combination))
 
 
 def create_closure(X, y, optimizer, model, loss_fn) -> Callable[[], float]:
@@ -184,34 +271,3 @@ def create_loss_fn_with_vars_pure(
         return loss, grad_mean, loss_var, grad_var
 
     return fn
-
-
-def create_losses_plot(
-    outs: list[dict[str, Any]],
-    out_names: list[str],
-    log_frequency,
-    logy=True,
-    skip_first=10,
-):
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    num_epochs = len(outs[0]["epoch_losses"])
-    epochs = np.arange(skip_first, num_epochs)
-    plots = []
-    for out, out_name in zip(outs, out_names):
-        (p,) = ax.plot(epochs, out["epoch_losses"][skip_first:], label=out_name)
-        plots.append(p)
-
-    epochs = np.arange(0, num_epochs, log_frequency) + log_frequency
-    cs = [p.get_color() for p in plots]
-    for i, out in enumerate(outs):
-        ax.plot(epochs, out["test_losses"], color=cs[i], marker="x", alpha=0.3)
-
-    ax.set_xlabel("Epoch")
-    if logy:
-        ax.set_ylabel("Log loss")
-        ax.set_yscale("log")
-    else:
-        ax.set_ylabel("Loss")
-    ax.legend()
-    return fig, ax

@@ -1,3 +1,5 @@
+import logging
+import math
 from typing import Any
 
 from torch.utils.data import Dataset
@@ -10,6 +12,9 @@ from .train_util import (
     create_loss_fn_pure,
     log_training_info,
 )
+
+logger = logging.getLogger()
+logging.basicConfig(level=logging.INFO)
 
 
 def train(
@@ -35,9 +40,18 @@ def train(
         loss = optimizer.step(closure, fn)
         losses.append(loss)
 
+        if math.isnan(loss):
+            logger.info(f"\tLoss hit NaN at epoch {epoch+1}, stopping early")
+            break
+
         if epoch % log_frequency == log_frequency - 1:
             test_loss = compute_loss(test_dataset, model, loss_fn)
             test_losses.append(test_loss)
             log_training_info(epoch + 1, loss, test_loss)
 
-    return {"epoch_losses": losses, "test_losses": test_losses}
+    return {
+        "epoch_losses": losses,
+        "test_losses": test_losses,
+        "min_test_loss": float("inf") if not test_losses else min(test_losses),
+        "log_frequency": log_frequency,
+    }

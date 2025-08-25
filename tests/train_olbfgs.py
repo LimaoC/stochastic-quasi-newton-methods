@@ -1,18 +1,26 @@
+import logging
+import math
+from collections import defaultdict
 from typing import Any
 
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Dataset
+from torcheval.metrics.metric import Metric
 
 from sqnm.optim.olbfgs import OLBFGS
 
 from .train_util import (
     compute_loss,
+    compute_metric,
     create_closure,
     create_loss_fn_pure,
     log_training_info,
 )
+
+logger = logging.getLogger()
+logging.basicConfig(level=logging.INFO)
 
 
 def train(
@@ -23,6 +31,7 @@ def train(
     model: nn.Module,
     loss_fn,
     device,
+    metrics: dict[str, Metric] = dict(),
     generator: torch.Generator | None = None,
     num_epochs=1000,
     log_frequency=100,
@@ -38,6 +47,7 @@ def train(
 
     epoch_losses = []
     test_losses = []  # computed every log_frequency epochs
+    test_metrics = defaultdict(list)  # problem-specific metrics
     for epoch in range(num_epochs):
         epoch_loss = 0.0
 
@@ -60,12 +70,27 @@ def train(
         epoch_loss /= num_batches
         epoch_losses.append(epoch_loss)
 
+        if math.isnan(epoch_loss):
+            logger.info(f"\tLoss hit NaN at epoch {epoch+1}, stopping early")
+            break
+
         if epoch % log_frequency == log_frequency - 1:
             test_loss = compute_loss(test_dataset, model, loss_fn)
             test_losses.append(test_loss)
-            log_training_info(epoch + 1, epoch_loss, test_loss)
+            for name, metric in metrics.items():
+                metric_val = compute_metric(test_dataset, model, metric)
+                test_metrics[name].append(metric_val)
+            log_training_info(epoch + 1, epoch_loss, test_loss, test_metrics)
 
-    return {"epoch_losses": epoch_losses, "test_losses": test_losses}
+    out = {
+        "epoch_losses": epoch_losses,
+        "test_losses": test_losses,
+        "min_test_loss": float("inf") if not test_losses else min(test_losses),
+        "log_frequency": log_frequency,
+    }
+    for name, metric in test_metrics.items():
+        out[name] = test_metrics[name]
+    return out
 
 
 # def train_with_prob_ls(
